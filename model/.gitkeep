@@ -1,0 +1,7 @@
+# This directory stores trained model weights
+# Place your .pt / .pth / .weights files here
+#
+# Recommended structure:
+#   model/v4_2class/best.pt
+#   model/v5_1class/best.pt
+#   model/v5_1class/best_quantized.pt
