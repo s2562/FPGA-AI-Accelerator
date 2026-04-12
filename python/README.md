@@ -1,54 +1,47 @@
-# 🐍 Python 파이프라인
+# Python 코드 구조
 
-## 개요
-
-FPGA CNN 가속기에 탑재될 PalletGridCNN 모델의 **학습, 추론, 평가, PTQ 양자화, FPGA 가중치 추출**을 담당하는 파이프라인입니다.
-
-## 버전 관리 정책
-
-각 기능 폴더(`train/`, `inference/`, `eval/`, `quantize/`) 아래에 `v{버전}_{설명}/` 디렉토리를 유지합니다.  
-**현재 최신 버전: `v5_hw_aware/`** (Hardware-Aware Co-Design, 채널 12배수)
-
-| 버전 | 폴더명 | 설명 |
-|------|--------|------|
-| Ver 4.0 | `v4_1class/` | 1-Class baseline, 채널 16/32/64/128 |
-| **Ver 5.0** ✅ | **`v5_hw_aware/`** | HW-Aware, 채널 12/24/48/96, DSP 낭비 0% |
-
-## 빠른 시작
-
-```bash
-# 학습
-cd train/v5_hw_aware && python train.py --config config.yaml
-
-# 추론
-cd inference/v5_hw_aware && python infer.py --img path/to/image.jpg
-
-# 평가
-cd eval/v5_hw_aware && python eval_map.py
-
-# PTQ + FPGA 가중치 추출
-cd quantize/v5_hw_aware && python ptq.py && python export_weights.py
-```
-
-## 폴더 구조
+## 버전별 구성
 
 ```
 python/
-├── dataset/        # 데이터셋 (raw → annotated → augmented → splits)
-├── train/          # 모델 학습 (v4_1class, v5_hw_aware)
-├── inference/      # 추론 및 데모 (v4_1class, v5_hw_aware)
-├── eval/           # 평가 및 버전 비교 (v4_1class, v5_hw_aware)
-├── quantize/       # PTQ 및 FPGA 가중치 .hex 변환 (v4_1class, v5_hw_aware)
-└── utils/          # 공통 유틸 (anchors, nms, decode, preprocess)
+├── v4_2class/                    ← Rev3, hole + pallet 2클래스, IMG=128
+│   ├── train.py
+│   ├── inference_webcam.py
+│   └── eval.py
+│
+└── v5_1class/                    ← hole only 1클래스, IMG=256
+    ├── train.py
+    ├── inference_webcam.py       ← FP32 추론
+    ├── eval.py
+    ├── quantize.py               ← Conv-BN Fusion + INT8 양자화 → quantized_win_cnn.pt 생성
+    └── inference_quantized_webcam.py  ← 양자화 모델 추론
 ```
 
-## 요구사항
+## 실행 순서 (v5_1class)
 
+```bash
+# 1. 학습
+python train.py
+
+# 2. FP32 추론 확인
+python inference_webcam.py
+
+# 3. 평가
+python eval.py
+
+# 4. 양자화 (model/pallet_grid_cnn_1class.pt 필요)
+python quantize.py
+
+# 5. 양자화 모델 추론
+python inference_quantized_webcam.py
 ```
-torch >= 2.0
-torchvision
-numpy
-opencv-python
-pyyaml
-matplotlib
-```
+
+## 모델 파일 경로
+
+각 버전 폴더 안의 `model/` 디렉토리에 체크포인트를 저장하세요.
+
+| 파일 | 설명 |
+|------|------|
+| `v4_2class/model/pallet_grid_cnn_rev3.pt` | v4 Rev3 체크포인트 |
+| `v5_1class/model/pallet_grid_cnn_1class.pt` | v5 FP32 체크포인트 |
+| `v5_1class/model/quantized_win_cnn.pt` | v5 양자화 모델 (quantize.py 실행 후 생성) |
