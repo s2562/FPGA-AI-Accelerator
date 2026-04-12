@@ -128,8 +128,8 @@ HEAD: Conv(96→18, 1×1 커널)                  출력:  32×32×18
 | Ver 1.0 | 64×64×3 | Patch Crop + FC | 실시간 추론 불가 |
 | Ver 2.0 | 128×128×3 | YOLO-style, 2-Class, 4×4→8×8 Grid | Patch Crop 탈피 |
 | Ver 3.0 | 256×256×3 | 3-Anchor, 32×32 Grid | 해상도·Grid 세분화 |
-| Ver 4.0 | 256×256×3 | 1-Class(hole), HEAD 54→18ch | FP 감소, 단순화 |
-| **Ver 5.0** ✅ | **256×256×3** | **HW-Aware, 채널 12배수** | **DSP 낭비 0%** |
+| Ver 4.0 | 256×256×3 | 2-Class(hole+pallet), YOLO-style | 클래스 분리 시도 |
+| **Ver 5.0** ✅ | **256×256×3** | **1-Class(hole), HW-Aware 채널 12배수** | **DSP 낭비 0%** |
 
 ---
 
@@ -147,7 +147,7 @@ HEAD: Conv(96→18, 1×1 커널)                  출력:  32×32×18
 | 6 | `bias.sv` | Bias 덧셈 (`b_fused`) | INT32 덧셈 |
 | 7 | `leaky_relu.sv` | LeakyReLU (α≈0.1, 비트시프트 근사) | `(>>4)+(>>5)` |
 | 8 | `maxpool.sv` | 2×2 Max Pooling (3-버퍼 구조) | |
-| 9 | `conv_engine.sv` | L2~8 통합 래퍼 (3×3 모드 / 1×1 모드) | HEAD 재활용 |
+| 9 | `conv_engine.sv` | L0~HEAD 통합 래퍼 (3×3 모드 / 1×1 모드) | HEAD 재활용 |
 | 10 | `weight_mem.sv` | 가중치 ROM (`$readmemh`) | BRAM ~22개 |
 | 11 | `feature_mem.sv` | 피처맵 Ping-Pong 버퍼 (R/W) | BRAM ~114개 |
 | 12 | `output_mem.sv` | HEAD 출력 버퍼 (R/W) | |
@@ -227,68 +227,33 @@ for out_pass = 0 to ceil(Cout/6)-1:
 
 ## 🐍 Python 파이프라인
 
-### 폴더 구조 및 버전 관리 정책
+### 버전 관리 정책
+
+`python/` 폴더는 모델 버전별로 분리합니다.  
+각 버전 폴더에는 **실행 파일 5개만** 포함합니다.
 
 ```
 python/
-├── README.md                  # Python 파이프라인 가이드
+├── v4_2class/                     # Ver 4.0 — 2-Class (hole + pallet)
+│   ├── train.py
+│   ├── eval.py
+│   └── inference_webcam.py
 │
-├── dataset/                   # 데이터셋 관리
-│   ├── raw/                   # 원본 이미지 (OV7670 캡처 등)
-│   ├── annotated/             # 라벨링 완료 데이터 (YOLO 형식 .txt)
-│   ├── augmented/             # Augmentation 결과
-│   └── splits/                # train / val / test 분할 결과
-│       ├── train/
-│       ├── val/
-│       └── test/
-│
-├── train/                     # 모델 학습
-│   ├── v4_1class/             # Ver 4.0 — 1-Class baseline
-│   │   ├── train.py
-│   │   ├── model.py           # PalletGridCNN 모델 정의
-│   │   ├── loss.py            # YOLO-style Loss (obj + bbox + cls)
-│   │   ├── dataset.py         # Custom Dataset / DataLoader
-│   │   └── config.yaml        # 하이퍼파라미터
-│   └── v5_hw_aware/           # Ver 5.0 — HW-Aware Co-Design ✅ 현재
-│       ├── train.py
-│       ├── model.py           # 채널 12배수 아키텍처
-│       ├── loss.py
-│       ├── dataset.py
-│       └── config.yaml
-│
-├── inference/                 # 추론 및 데모
-│   ├── v4_1class/
-│   │   └── infer.py           # 저장된 체크포인트로 단일/배치 추론
-│   └── v5_hw_aware/           # ✅ 현재
-│       ├── infer.py
-│       └── demo_webcam.py     # 실시간 웹캠 추론 (개발 검증용)
-│
-├── eval/                      # 평가 및 분석
-│   ├── v4_1class/
-│   │   ├── eval_map.py        # mAP 계산
-│   │   └── visualize.py       # BBox 시각화
-│   └── v5_hw_aware/           # ✅ 현재
-│       ├── eval_map.py
-│       ├── visualize.py
-│       └── compare_versions.py  # 버전 간 mAP / FPS 비교
-│
-├── quantize/                  # PTQ 및 가중치 변환
-│   ├── v4_1class/
-│   │   └── export_weights.py  # FP32 → INT8 PTQ, .hex 파일 생성
-│   └── v5_hw_aware/           # ✅ 현재
-│       ├── ptq.py             # Post-Training Quantization
-│       ├── export_weights.py  # weight_mem용 .hex 파일 생성
-│       └── verify_quant.py    # FP32 vs INT8 정확도 비교
-│
-└── utils/                     # 공통 유틸리티
-    ├── anchors.py             # Anchor 크기 정의 및 IoU 계산
-    ├── nms.py                 # Non-Maximum Suppression
-    ├── decode.py              # Grid → BBox 좌표 디코딩
-    └── preprocess.py          # 이미지 전처리 (256×256 리사이즈, 정규화)
+└── v5_1class/                     # Ver 5.0 — 1-Class, HW-Aware ✅ 현재
+    ├── train.py
+    ├── eval.py
+    ├── inference_webcam.py
+    ├── inference_quantized_webcam.py
+    └── quantize.py
 ```
 
-> 📌 **버전 관리 정책**: 각 하위 폴더에 `v{버전}_{설명}/` 형태로 버전 디렉토리를 유지합니다.  
-> 최신 버전은 `v5_hw_aware/` 입니다. 이전 버전은 비교·참조용으로 보존합니다.
+| 파일 | 설명 |
+|------|------|
+| `train.py` | 모델 학습 (FP32, PyTorch) |
+| `eval.py` | mAP 평가 및 결과 출력 |
+| `inference_webcam.py` | 웹캠 실시간 추론 (FP32) |
+| `inference_quantized_webcam.py` | 웹캠 실시간 추론 (INT8 PTQ) |
+| `quantize.py` | PTQ 수행 + FPGA용 `.hex` 가중치 추출 |
 
 ---
 
@@ -326,133 +291,80 @@ python/
 FPGA-AI-Accelerator/
 ├── README.md
 │
-├── docs/                              # 문서 및 설계 자료
-│   ├── architecture/                  # 블록 다이어그램, 아키텍처 문서
-│   ├── spec/                          # 설계 스펙 변천사, 최종 결정 문서
-│   ├── diagrams/                      # Wavedrom / timing 다이어그램
-│   ├── presentation/                  # 발표 자료
-│   └── references/                    # 논문, 데이터시트 참고자료
+├── images/                            # 문서용 이미지
+│   └── demo/
+│
+├── model/                             # 학습된 모델 가중치
+│   ├── v4_2class/
+│   │   └── best.pt
+│   └── v5_1class/
+│       ├── best.pt
+│       └── best_quantized.pt
+│
+├── python/                            # Python 파이프라인 (학습/추론/평가/양자화)
+│   ├── v4_2class/                     # Ver 4.0 — 2-Class
+│   │   ├── train.py
+│   │   ├── eval.py
+│   │   └── inference_webcam.py
+│   └── v5_1class/                     # Ver 5.0 — 1-Class, HW-Aware ✅ 현재
+│       ├── train.py
+│       ├── eval.py
+│       ├── inference_webcam.py
+│       ├── inference_quantized_webcam.py
+│       └── quantize.py
 │
 ├── rtl/                               # RTL 소스 (SystemVerilog)
 │   ├── top/
-│   │   └── top.v                      # Top Module (전체 연결)
-│   ├── engine/                        # conv_engine 및 관련 연산 모듈
-│   │   ├── conv_engine.sv             # 3×3 / 1×1 통합 래퍼
-│   │   ├── mac_array.sv               # 조합논리 트리 (In4 × Out6, DSP 216)
-│   │   ├── scaler.sv                  # INT32 → INT8 재양자화
-│   │   ├── bias.sv                    # Bias 덧셈
-│   │   ├── leaky_relu.sv              # LeakyReLU (비트시프트 근사)
-│   │   └── maxpool.sv                 # 2×2 Max Pooling
-│   ├── datapath/                      # 데이터 흐름 모듈
-│   │   ├── line_buffer.sv             # 2줄 슬라이딩 버퍼 (col 단위 shift)
-│   │   └── window_reg.sv              # 3×3×Ch 윈도우 슬라이딩
-│   ├── memory/                        # 메모리 모듈
-│   │   ├── dual_port_ram.sv           # 듀얼포트 BRAM 베이스
-│   │   ├── weight_mem.sv              # 가중치 ROM ($readmemh)
-│   │   ├── feature_mem.sv             # 피처맵 Ping-Pong 버퍼
-│   │   └── output_mem.sv             # HEAD 출력 버퍼
-│   ├── control/                       # 제어 모듈
-│   │   └── fsm_controller.sv          # 레이어 전환 FSM
-│   └── interface/                     # 인터페이스 모듈
+│   │   └── top.v
+│   ├── engine/
+│   │   ├── conv_engine.sv
+│   │   ├── mac_array.sv
+│   │   ├── scaler.sv
+│   │   ├── bias.sv
+│   │   ├── leaky_relu.sv
+│   │   └── maxpool.sv
+│   ├── datapath/
+│   │   ├── line_buffer.sv
+│   │   └── window_reg.sv
+│   ├── memory/
+│   │   ├── dual_port_ram.sv
+│   │   ├── weight_mem.sv
+│   │   ├── feature_mem.sv
+│   │   └── output_mem.sv
+│   ├── control/
+│   │   └── fsm_controller.sv
+│   └── interface/
 │       ├── uart_rx.sv
 │       ├── uart_tx.sv
-│       └── axi4_lite_slave.sv         # (선택) AXI4-Lite 슬레이브
+│       └── axi4_lite_slave.sv
 │
 ├── tb/                                # 테스트벤치
-│   ├── unit/                          # 모듈별 단위 테스트
+│   ├── unit/
 │   │   ├── tb_dual_port_ram.sv
 │   │   ├── tb_line_buffer.sv
 │   │   ├── tb_mac_array.sv
 │   │   ├── tb_conv_engine.sv
 │   │   └── tb_fsm_controller.sv
-│   └── uvm/                           # UVM 검증
-│       ├── mac_array/                 # MAC Array UVM TB
-│       │   ├── mac_agent.sv
-│       │   ├── mac_scoreboard.sv
-│       │   └── mac_test.sv
-│       └── conv_engine/               # Conv Engine UVM TB
-│           ├── conv_agent.sv
-│           ├── conv_scoreboard.sv
-│           └── conv_test.sv
-│
-├── python/                            # Python 파이프라인 (학습/추론/평가/양자화)
-│   ├── README.md
-│   ├── dataset/
-│   │   ├── raw/
-│   │   ├── annotated/
-│   │   ├── augmented/
-│   │   └── splits/
-│   │       ├── train/
-│   │       ├── val/
-│   │       └── test/
-│   ├── train/
-│   │   ├── v4_1class/
-│   │   │   ├── train.py
-│   │   │   ├── model.py
-│   │   │   ├── loss.py
-│   │   │   ├── dataset.py
-│   │   │   └── config.yaml
-│   │   └── v5_hw_aware/               # ✅ 현재 버전
-│   │       ├── train.py
-│   │       ├── model.py
-│   │       ├── loss.py
-│   │       ├── dataset.py
-│   │       └── config.yaml
-│   ├── inference/
-│   │   ├── v4_1class/
-│   │   │   └── infer.py
-│   │   └── v5_hw_aware/               # ✅ 현재 버전
-│   │       ├── infer.py
-│   │       └── demo_webcam.py
-│   ├── eval/
-│   │   ├── v4_1class/
-│   │   │   ├── eval_map.py
-│   │   │   └── visualize.py
-│   │   └── v5_hw_aware/               # ✅ 현재 버전
-│   │       ├── eval_map.py
-│   │       ├── visualize.py
-│   │       └── compare_versions.py
-│   ├── quantize/
-│   │   ├── v4_1class/
-│   │   │   └── export_weights.py
-│   │   └── v5_hw_aware/               # ✅ 현재 버전
-│   │       ├── ptq.py
-│   │       ├── export_weights.py
-│   │       └── verify_quant.py
-│   └── utils/
-│       ├── anchors.py
-│       ├── nms.py
-│       ├── decode.py
-│       └── preprocess.py
-│
-├── weights/                           # 학습된 가중치 파일
-│   ├── v4_1class/
-│   │   ├── best.pth                   # PyTorch FP32 체크포인트
-│   │   └── best_int8.pth              # INT8 PTQ 체크포인트
-│   └── v5_hw_aware/                   # ✅ 현재
-│       ├── best.pth
-│       ├── best_int8.pth
-│       └── weights_hex/               # FPGA 로드용 .hex 파일
-│           ├── l0_weight.hex
-│           ├── l1_weight.hex
-│           ├── l2_weight.hex
-│           ├── l3_weight.hex
-│           ├── head_weight.hex
-│           └── bias_all.hex
+│   └── uvm/
+│       ├── mac_array/
+│       └── conv_engine/
 │
 ├── constraints/
-│   └── zybo_z7_20.xdc                 # Zybo Z7-20 핀 제약
+│   └── zybo_z7_20.xdc
 │
 ├── scripts/
 │   ├── vivado/
-│   │   ├── create_project.tcl         # Vivado 프로젝트 자동 생성
-│   │   └── run_synth_impl.tcl         # 합성/구현 자동화
+│   │   ├── create_project.tcl
+│   │   └── run_synth_impl.tcl
 │   └── util/
-│       └── hex_merge.py               # 레이어별 hex 파일 병합 유틸
+│       └── hex_merge.py
 │
-└── images/                            # 문서용 이미지
-    ├── system_diagram.png
-    └── demo/
+└── docs/
+    ├── architecture/
+    ├── spec/
+    ├── diagrams/
+    ├── presentation/
+    └── references/
 ```
 
 ---
@@ -469,27 +381,27 @@ FPGA-AI-Accelerator/
 | **Python** | 3.8+ (PyTorch 2.0+, NumPy, OpenCV) |
 | **카메라** | OV7670 (256×256 RGB) |
 
-### 빠른 시작 (Python 학습 → 가중치 추출)
+### 빠른 시작 (Python)
 
 ```bash
 # 1. 환경 구성
 pip install torch torchvision numpy opencv-python pyyaml
 
 # 2. Ver 5.0 모델 학습
-cd python/train/v5_hw_aware
-python train.py --config config.yaml
+cd python/v5_1class
+python train.py
 
-# 3. INT8 PTQ 및 FPGA 가중치 추출
-cd python/quantize/v5_hw_aware
-python ptq.py --checkpoint ../../weights/v5_hw_aware/best.pth
-python export_weights.py --output ../../../weights/v5_hw_aware/weights_hex/
+# 3. 평가
+python eval.py
 
-# 4. 모델 평가
-cd python/eval/v5_hw_aware
-python eval_map.py --checkpoint ../../weights/v5_hw_aware/best_int8.pth
+# 4. 웹캠 실시간 추론 (FP32)
+python inference_webcam.py
 
-# 5. 버전 비교
-python compare_versions.py
+# 5. INT8 양자화 + FPGA 가중치 추출
+python quantize.py
+
+# 6. 양자화 모델 웹캠 추론
+python inference_quantized_webcam.py
 ```
 
 ### Vivado 프로젝트 빌드
@@ -507,7 +419,7 @@ vivado -mode batch -source scripts/vivado/run_synth_impl.tcl
 
 ---
 
-## 🔧 트러블슈팅 & 설계 노트
+## 🔧 설계 노트
 
 > 프로젝트 진행 중 발생한 이슈 및 결정 근거를 기록합니다.
 
